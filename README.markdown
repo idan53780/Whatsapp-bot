@@ -2,12 +2,12 @@
 
 ## What Does This Project Do?
 
-This project creates a **mock (fake) version** of a Whatsapp_Bot_Test that:
+This project creates a **mock (fake) version** of a Whatsapp_Bot  that:
 - Checks if phone numbers in a group are Israeli (e.g., starting with `+972` or `05`) or on a special “whitelist” of allowed numbers. If not, it pretends to kick them out.
 - Looks for “bad” words (like “spam” or “buy now”) in messages. If it finds them, it pretends to delete the user’s messages and remove them from the group.
 - Only works in specific groups listed in a settings file.
 
-Instead of connecting to real WhatsApp, it uses a **local server** on your computer to send and receive fake messages, making it safe and easy to test. You can send messages to the bot and see how it reacts, like a game!
+Instead of connecting to real WhatsApp, it uses a **local server** on your computer to send and receive fake messages, making it safe and easy to test. You can send messages to the bot and see how it reacts.
 
 
 ## What You’ll Need

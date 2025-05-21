@@ -14,10 +14,11 @@ const BLOCKED_KEYWORDS = (config.blockedKeywords || []).map(k => k.toLowerCase()
 const ALLOWED_GROUPS = config.allowedGroups || [];
 console.log('Loaded ALLOWED_GROUPS:', ALLOWED_GROUPS);
 console.log('Loaded WHITELIST:', WHITELIST);
+console.log('Loaded BLOCKED_KEYWORDS :', BLOCKED_KEYWORDS, '\n\n');
 
 // Israeli phone number checker
 function isIsraeliPhoneNumber(phoneNumber) {
-    const israelRegex = /^(?:\+972|972|05[0-9])[0-9]{7,9}$/;
+    const israelRegex = /^(?:\+972|972|05[0-9])[0-9]{7,9}$/;// old regex : /^(?:\+972|972|05[0-9])[0-9]{7}$/
     const isValid = israelRegex.test(phoneNumber);
     console.log(`Checking number ${phoneNumber}: ${isValid ? 'Israeli' : 'Non-Israeli'}`);
     return isValid;
@@ -45,7 +46,7 @@ class FakeMessage {
 class FakeChat {
     constructor(id) {
         this.id = { _serialized: id };
-        this.isGroup = true; // Explicitly set to true for group simulation
+        this.isGroup = true; //  set to true for group simulation
     }
     async removeParticipants(participants) {
         console.log(`🚫 Simulated removal of participants: ${participants.join(', ')}`);
