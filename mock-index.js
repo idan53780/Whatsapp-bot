@@ -18,7 +18,7 @@ console.log('Loaded BLOCKED_KEYWORDS :', BLOCKED_KEYWORDS, '\n\n');
 
 // Israeli phone number checker
 function isIsraeliPhoneNumber(phoneNumber) {
-    const israelRegex = /^(?:\+972|972|05[0-9])[0-9]{7,9}$/;// old regex : /^(?:\+972|972|05[0-9])[0-9]{7}$/
+    const israelRegex = /^(?:\+972|972|05[0-9])[0-9]{7,9}$/;
     const isValid = israelRegex.test(phoneNumber);
     console.log(`Checking number ${phoneNumber}: ${isValid ? 'Israeli' : 'Non-Israeli'}`);
     return isValid;
@@ -38,7 +38,13 @@ class FakeMessage {
         return { id: { _serialized: this.author }, number: this.author };
     }
     async delete() {
-        console.log(`🗑️ Simulated deletion of message: "${this.body}"`);
+        try {
+            console.log(`🗑️ Simulated deletion of message: "${this.body}"`);
+            return true;
+        } catch (error) {
+            console.error(`Failed to delete message "${this.body}": ${error.message}`);
+            return false;
+        }
     }
 }
 
@@ -46,13 +52,20 @@ class FakeMessage {
 class FakeChat {
     constructor(id) {
         this.id = { _serialized: id };
-        this.isGroup = true; //  set to true for group simulation
+        this.isGroup = true; // set to true for group simulation
     }
     async removeParticipants(participants) {
         console.log(`🚫 Simulated removal of participants: ${participants.join(', ')}`);
     }
     async fetchMessages({ limit }) {
-        return fakeMessages.filter(msg => msg.chatId === this.id._serialized).slice(0, limit);
+        try {
+            const messages = fakeMessages.filter(msg => msg.chatId === this.id._serialized).slice(0, limit);
+            console.log(`Fetched ${messages.length} messages for chat ${this.id._serialized}`);
+            return messages;
+        } catch (error) {
+            console.error(`Failed to fetch messages for chat ${this.id._serialized}: ${error.message}`);
+            return [];
+        }
     }
 }
 
@@ -70,15 +83,36 @@ async function handleMessage(msg) {
 
     const contact = await msg.getContact();
     const contactNumber = contact.number;
+    const messageText = msg.body.toLowerCase();
+    const hasBlockedKeyword = BLOCKED_KEYWORDS.some(keyword => messageText.includes(keyword));
 
+    // Check if number is non-Israeli and not whitelisted
     if (!isIsraeliPhoneNumber(contactNumber) && !WHITELIST.includes(contactNumber)) {
         console.log(`Non-Israeli number detected: ${contactNumber}`);
+        // Fetch messages before kicking to ensure access (simulating real-world message ID collection)
+        let userMessages = [];
+        if (hasBlockedKeyword) {
+            console.log(`Blocked keyword detected in: "${msg.body}"`);
+            try {
+                userMessages = await chat.fetchMessages({ limit: 20 });
+                userMessages = userMessages.filter(m => m.author === contact.id._serialized);
+                console.log(`Stored ${userMessages.length} messages for deletion after kick`);
+            } catch (error) {
+                console.error(`Failed to fetch messages before kick: ${error.message}`);
+            }
+        }
+        // Kick the user first
         await chat.removeParticipants([contact.id._serialized]);
+        // Delete messages if they contain blocked keywords
+        if (hasBlockedKeyword && userMessages.length > 0) {
+            for (const userMsg of userMessages) {
+                await userMsg.delete();
+            }
+        }
         return;
     }
 
-    const messageText = msg.body.toLowerCase();
-    const hasBlockedKeyword = BLOCKED_KEYWORDS.some(keyword => messageText.includes(keyword));
+    // For Israeli or whitelisted numbers, check for blocked keywords
     if (hasBlockedKeyword) {
         console.log(`Blocked keyword detected in: "${msg.body}"`);
         const recentMessages = await chat.fetchMessages({ limit: 20 });
@@ -104,10 +138,14 @@ async function runTests() {
     console.log('=== Starting Mock Tests ===');
     const testMessages = [
         { body: 'Hello, this is a test', author: '+972501234567', chatId: '1234567890-1234567890@g.us' },
-        { body: 'SPAM alert! Buy now!', author: '+12025550123', chatId: '1234567890-1234567890@g.us' },
-        { body: 'Free money offer', author: '+12025550123', chatId: '1234567890-1234567890@g.us' },
+        { body: 'SPAM alert! Buy now! - SPAM TEST ', author: '+12025550123', chatId: '1234567890-1234567890@g.us' },
+        { body: 'NOT ALLOWED NUMBER TEST', author: '+12025550124', chatId: '1234567890-1234567890@g.us' },
+        { body: 'ALLOWED NUMBER WITH SPAM TEST - free money offer', author: '0505874322', chatId: '1234567890-1234567890@g.us' },
         { body: 'Normal message', author: '1234567890', chatId: '1234567890-1234567890@g.us' },
-        { body: 'Test in wrong group', author: '+972501234567', chatId: 'wrong-group@g.us' }
+        { body: 'Test in wrong group', author: '+972501234567', chatId: 'wrong-group@g.us' },
+        { body: 'SPAM message 1 - free offer', author: '+12025550125', chatId: '1234567890-1234567890@g.us' },
+        { body: 'SPAM message 2 - buy now!', author: '+12025550125', chatId: '1234567890-1234567890@g.us' },
+        { body: 'SPAM message 3 - click here', author: '+12025550125', chatId: '1234567890-1234567890@g.us' }
     ];
 
     for (const msg of testMessages) {
