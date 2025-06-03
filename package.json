@@ -1,0 +1,24 @@
+{
+  "name": "whatsapp-group-bot",
+  "version": "1.0.0",
+  "description": "A WhatsApp bot that automatically moderates group chats by removing non-Israeli phone numbers and users who send messages with blocked keywords.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "moderation",
+    "group",
+    "automation",
+    "israel",
+    "spam-blocker"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.23.0"
+  }
+}
