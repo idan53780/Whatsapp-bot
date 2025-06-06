@@ -9,6 +9,7 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
+tempCodeRunnerFile.js
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
@@ -45,6 +46,7 @@ build/Release
 node_modules/
 jspm_packages/
 .wwebjs_auth/
+
 
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/

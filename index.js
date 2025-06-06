@@ -19,28 +19,57 @@ const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--disable-gpu'],
+        executablePath: require('puppeteer').executablePath()
     }
 });
 
 // QR code login
 client.on('qr', qr => {
+    console.log('New QR code generated');
     qrcode.generate(qr, { small: true });
 });
 
-// Ready handler
+// Ready handler with 5-minute timeout and progress logging
 client.on('ready', async () => {
     console.log('✅ Bot is ready!');
+    console.log('Starting to fetch chats...');
+    const startTime = Date.now();
 
-    const chats = await client.getChats();
-    const groups = chats.filter(chat => chat.isGroup);
-    console.log('\n=== Available Groups ===');
-    groups.forEach(group => {
-        console.log(`${group.name}: ${group.id._serialized}`);
-    });
+    // Progress logging every 30 seconds
+    const progressInterval = setInterval(() => {
+        console.log(`Still fetching chats... Elapsed time: ${(Date.now() - startTime) / 1000} seconds`);
+    }, 30000);
+
+    try {
+        // 5-minute timeout for getChats()
+        const chats = await Promise.race([
+            client.getChats(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('getChats timed out after 5 minutes')), 300000))
+        ]);
+        clearInterval(progressInterval);
+        const endTime = Date.now();
+        console.log(`✅ getChats completed in ${(endTime - startTime) / 1000} seconds`);
+        console.log(`Total chats found: ${chats.length}`);
+
+        const groups = chats.filter(chat => chat.isGroup);
+        console.log(`Total groups found: ${groups.length}`);
+        console.log('\n=== Available Groups ===');
+        if (groups.length === 0) {
+            console.log('No groups found. Ensure your WhatsApp account is in groups and has admin privileges.');
+        } else {
+            groups.forEach(group => {
+                console.log(`Name: ${group.name}, ID: ${group.id._serialized}, Admin: ${group.isAdmin}`);
+            });
+        }
+    } catch (error) {
+        clearInterval(progressInterval);
+        console.error(`❌ Error fetching chats: ${error.message}`);
+        console.error(`Stack trace: ${error.stack}`);
+    }
 });
 
-// Message handler
+// Message handler 
 client.on('message', async msg => {
     const chat = await msg.getChat();
     if (!chat.isGroup || !ALLOWED_GROUPS.includes(chat.id._serialized)) {
@@ -53,12 +82,9 @@ client.on('message', async msg => {
     const messageText = msg.body.toLowerCase();
     const hasBlockedKeyword = BLOCKED_KEYWORDS.some(keyword => messageText.includes(keyword));
 
-    // Check for non-Israeli number or non-whitelisted
     if (!isIsraeliPhoneNumber(contactNumber) && !WHITELIST.includes(contactNumber)) {
         console.log(`🚨 Non-Israeli number detected: ${contactNumber}`);
         let messageIds = [];
-
-        // Pre-fetch messages for deletion if keyword is blocked
         if (hasBlockedKeyword) {
             console.log(`⚠️ Blocked keyword detected in: "${msg.body}"`);
             try {
@@ -75,7 +101,6 @@ client.on('message', async msg => {
             }
         }
 
-        // Delete messages first
         if (hasBlockedKeyword && messageIds.length > 0) {
             for (const msgId of messageIds) {
                 try {
@@ -87,7 +112,6 @@ client.on('message', async msg => {
             }
         }
 
-        // Then remove user
         try {
             await chat.removeParticipants([contact.id._serialized]);
             console.log(`🚫 Removed non-Israeli number: ${contactNumber}`);
@@ -97,7 +121,6 @@ client.on('message', async msg => {
         return;
     }
 
-    // For Israeli or whitelisted numbers, check for blocked keywords
     if (hasBlockedKeyword) {
         console.log(`⚠️ Blocked keyword detected in: "${msg.body}"`);
         try {
@@ -126,4 +149,12 @@ client.on('message', async msg => {
     }
 });
 
-client.initialize();
+// Prevent multiple initializations
+let isInitialized = false;
+client.on('authenticated', () => {
+    console.log('Authenticated successfully');
+});
+if (!isInitialized) {
+    isInitialized = true;
+    client.initialize().catch(err => console.error(`❌ Initialization failed: ${err.message}`));
+}

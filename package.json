@@ -19,6 +19,15 @@
   "license": "MIT",
   "dependencies": {
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.23.0"
-  }
+    "whatsapp-web.js": "^1.30.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orenykb/whatsapp-bot.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/orenykb/whatsapp-bot/issues"
+  },
+  "homepage": "https://github.com/orenykb/whatsapp-bot#readme"
 }
