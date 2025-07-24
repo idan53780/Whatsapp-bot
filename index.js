@@ -8,11 +8,40 @@ const WHITELIST = config.whitelist;
 const BLOCKED_KEYWORDS = config.blockedKeywords.map(k => k.toLowerCase());
 const ALLOWED_GROUPS = config.allowedGroups;
 
-// Israeli phone number checker
+// Helper to check if a phone number is Israeli
 function isIsraeliPhoneNumber(phoneNumber) {
-    const israelRegex = /^(?:\+972|972|05\d{1})\d{7}$/;
-    return israelRegex.test(phoneNumber);
+    phoneNumber = phoneNumber.replace(/[-\s]/g, '');
+    const israelRegex = /^(?:\+972|972|0)(5[0-9])\d{7}$/;
+    const result = israelRegex.test(phoneNumber);
+    return result;
 }
+
+// Helper to safely remove a participant if they're in the group
+
+async function safeRemoveParticipant(chat, participantId, label = '') {
+    try {
+        // Always fetch latest participants
+        
+
+        const isParticipant = chat.participants.some(p => p.id._serialized === participantId);
+        
+        console.log(`🚫  about to Remove  user ${label}: ${participantId}`);
+        if (isParticipant) {
+            try {
+                await chat.removeParticipants([participantId]);
+                console.log(`🚫 Removed user ${label}: ${participantId}`);
+                
+            } catch (error) {
+                console.error(`❌ Failed to remove user ${label}: ${error.message}`);
+            }
+        } else {
+            console.warn(`⚠️ Cannot remove ${label} ${participantId}, not found in participants`);
+        }
+    } catch (fetchError) {
+        console.error(`❌ Failed to fetch participants for removal: ${fetchError.message}`);
+    }
+}
+
 
 // Init client
 const client = new Client({
@@ -32,17 +61,21 @@ client.on('qr', qr => {
 
 // Ready handler with 5-minute timeout and progress logging
 client.on('ready', async () => {
+    if (client.isReady) {
+        console.log('Ready event triggered again, skipping...');
+        return;
+    }
+    client.isReady = true;
     console.log('✅ Bot is ready!');
+    console.log(`Bot WhatsApp ID: ${client.info.wid._serialized}`);
+
     console.log('Starting to fetch chats...');
     const startTime = Date.now();
-
-    // Progress logging every 30 seconds
     const progressInterval = setInterval(() => {
         console.log(`Still fetching chats... Elapsed time: ${(Date.now() - startTime) / 1000} seconds`);
     }, 30000);
 
     try {
-        // 5-minute timeout for getChats()
         const chats = await Promise.race([
             client.getChats(),
             new Promise((_, reject) => setTimeout(() => reject(new Error('getChats timed out after 5 minutes')), 300000))
@@ -69,7 +102,7 @@ client.on('ready', async () => {
     }
 });
 
-// Message handler 
+// Message handler
 client.on('message', async msg => {
     const chat = await msg.getChat();
     if (!chat.isGroup || !ALLOWED_GROUPS.includes(chat.id._serialized)) {
@@ -77,16 +110,27 @@ client.on('message', async msg => {
         return;
     }
 
+    const botId = client.info.wid._serialized;
+    const botParticipant = chat.participants.find(p => p.id._serialized === botId);
+    if (!botParticipant || !botParticipant.isAdmin) {
+        console.log(`Bot is not an admin in group ${chat.id._serialized}. Cannot remove participants.`);
+        chat.sendMessage('Bot is not an admin in group');
+        return;
+    }
+   
+    
     const contact = await msg.getContact();
     const contactNumber = contact.id.user;
     const messageText = msg.body.toLowerCase();
     const hasBlockedKeyword = BLOCKED_KEYWORDS.some(keyword => messageText.includes(keyword));
 
+    // Case 1: Non-Israeli number & not whitelisted
     if (!isIsraeliPhoneNumber(contactNumber) && !WHITELIST.includes(contactNumber)) {
         console.log(`🚨 Non-Israeli number detected: ${contactNumber}`);
+        chat.sendMessage('`🚨 Non-Israeli number detectet');
         let messageIds = [];
         if (hasBlockedKeyword) {
-            console.log(`⚠️ Blocked keyword detected in: "${msg.body}"`);
+            console.log(`⚠️ Blocked keyword detected in (case 1): "${msg.body}"`);
             try {
                 const recentMessages = await chat.fetchMessages({ limit: 20 });
                 messageIds = recentMessages
@@ -112,17 +156,33 @@ client.on('message', async msg => {
             }
         }
 
-        try {
-            await chat.removeParticipants([contact.id._serialized]);
-            console.log(`🚫 Removed non-Israeli number: ${contactNumber}`);
-        } catch (error) {
-            console.error(`❌ Failed to remove user: ${error.message}`);
-        }
+        await safeRemoveParticipant(chat, contact.id._serialized, contactNumber);
         return;
     }
 
+    // Case 2: Israeli or whitelisted but used blocked keyword
     if (hasBlockedKeyword) {
-        console.log(`⚠️ Blocked keyword detected in: "${msg.body}"`);
+        console.log(`⚠️ Blocked keyword detected in (case 2): "${msg.body}"`);
+        chat.sendMessage('⚠️ Blocked keyword detected ');
+
+        // Check if sender is an admin
+        const botId = client.info.wid._serialized;
+        const senderId = contact.id._serialized;
+        const isSenderAdmin = chat.participants?.find(p => p.id._serialized === senderId)?.isAdmin || false;
+            if (isSenderAdmin) {
+                console.log(`⚠️ Skipping deletion for admin user ${contactNumber}`);
+                return;
+            }
+.
+        // Delete the current message
+        try {
+            await msg.delete(true);
+            console.log(`🗑️ Deleted current message from ${contactNumber}: "${msg.body}" (ID: ${msg.id._serialized})`);
+            chat.sendMessage('🗑️ Deleted current message ');
+        } catch (deleteError) {
+            console.error(`❌ Failed to delete current message ID ${msg.id._serialized}: ${deleteError.message}`);
+        }
+
         try {
             const recentMessages = await chat.fetchMessages({ limit: 20 });
             const userMessages = recentMessages.filter(m => {
@@ -139,9 +199,9 @@ client.on('message', async msg => {
                 }
             }
 
-            await chat.removeParticipants([contact.id._serialized]);
-            console.log(`🚫 Removed user after spam: ${contactNumber}`);
-        } catch (error) {
+           // await safeRemoveParticipant(chat, contact.id._serialized, contactNumber);
+        } 
+        catch (error) {
             console.error(`❌ Error during message cleanup and removal: ${error.message}`);
         }
     } else {
