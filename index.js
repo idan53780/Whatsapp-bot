@@ -17,31 +17,93 @@ function isIsraeliPhoneNumber(phoneNumber) {
 }
 
 // Helper to safely remove a participant if they're in the group
-
 async function safeRemoveParticipant(chat, participantId, label = '') {
     try {
-        // Always fetch latest participants
-        
+        // Ensure participants is an array
+        if (!Array.isArray(chat.participants)) {
+            console.error(`❌ Participants array is invalid for chat ${chat.id._serialized}`);
+            return;
+        }
 
+        // Check if bot is admin
+        const botId = client.info.wid._serialized;
+        const isBotAdmin = chat.participants.find(p => p.id._serialized === botId)?.isAdmin || false;
+        if (!isBotAdmin) {
+            console.warn(`⚠️ Cannot remove ${label} ${participantId}: Bot is not an admin`);
+            chat.sendMessage('Bot is not an admin in group');
+            return;
+        }
+
+        // Check if sender is admin
+        const isSenderAdmin = chat.participants.find(p => p.id._serialized === participantId)?.isAdmin || false;
+        if (isSenderAdmin) {
+            console.log(`⚠️ Skipping removal for admin user ${label}`);
+            return;
+        }
+
+        // Validate participantId format
+        if (!participantId.endsWith('@c.us')) {
+            console.warn(`⚠️ Invalid participant ID format: ${participantId}. Expected phoneNumber@c.us`);
+            return;
+        }
+
+        // Check if participant is in the group
+        console.log(`Participants in chat ${chat.id._serialized}:`, chat.participants.map(p => p.id._serialized));
         const isParticipant = chat.participants.some(p => p.id._serialized === participantId);
-        
-        console.log(`🚫  about to Remove  user ${label}: ${participantId}`);
+        console.log(`🚫 Attempting to remove user ${label}: ${participantId}`);
         if (isParticipant) {
-            try {
-                await chat.removeParticipants([participantId]);
-                console.log(`🚫 Removed user ${label}: ${participantId}`);
-                
-            } catch (error) {
-                console.error(`❌ Failed to remove user ${label}: ${error.message}`);
+            let attempts = 0;
+            while (attempts < 2) {
+                try {
+                    await chat.removeParticipants([participantId]);
+                    console.log(`🚫 Removed user ${label}: ${participantId}`);
+                    await new Promise(resolve => setTimeout(resolve, 3000)); // 3-second delay
+                    return;
+                } catch (error) {
+                    attempts++;
+                    console.warn(`⚠️ Retry ${attempts} for removing ${label} ${participantId}`);
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    if (attempts === 2) throw error;
+                }
             }
         } else {
-            console.warn(`⚠️ Cannot remove ${label} ${participantId}, not found in participants`);
+            console.warn(`⚠️ Cannot remove ${label} ${participantId}: Not found in participants`);
         }
-    } catch (fetchError) {
-        console.error(`❌ Failed to fetch participants for removal: ${fetchError.message}`);
+    } catch (error) {
+        console.error(`❌ Failed to remove user ${label} ${participantId}: ${error.message}`);
     }
 }
 
+// Helper to delete messages (current and recent)
+async function deleteMessages(chat, msg, contactNumber, contactId) {
+    try {
+        // Delete current message
+        await msg.delete(true);
+        console.log(`🗑️ Deleted current message from ${contactNumber}: "${msg.body}" (ID: ${msg.id._serialized})`);
+        chat.sendMessage('🗑️ Deleted current message');
+    } catch (deleteError) {
+        console.error(`❌ Failed to delete current message ID ${msg.id._serialized}: ${deleteError.message}`);
+    }
+
+    try {
+        const recentMessages = await chat.fetchMessages({ limit: 20 });
+        const userMessages = recentMessages.filter(m => {
+            const senderId = chat.isGroup ? m.author : m.from;
+            return senderId === contactId;
+        });
+
+        for (const userMsg of userMessages) {
+            try {
+                await userMsg.delete(true);
+                console.log(`🗑️ Deleted message from ${contactNumber}: "${userMsg.body}"`);
+            } catch (deleteError) {
+                console.error(`❌ Failed to delete a message: ${deleteError.message}`);
+            }
+        }
+    } catch (error) {
+        console.error(`❌ Error during message cleanup: ${error.message}`);
+    }
+}
 
 // Init client
 const client = new Client({
@@ -86,13 +148,16 @@ client.on('ready', async () => {
         console.log(`Total chats found: ${chats.length}`);
 
         const groups = chats.filter(chat => chat.isGroup);
-        console.log(`Total groups found: ${groups.length}`);
+        const uniqueGroups = Array.from(new Map(groups.map(g => [g.id._serialized, g])).values());
+        console.log(`Total groups found: ${uniqueGroups.length}`);
         console.log('\n=== Available Groups ===');
-        if (groups.length === 0) {
+        if (uniqueGroups.length === 0) {
             console.log('No groups found. Ensure your WhatsApp account is in groups and has admin privileges.');
         } else {
-            groups.forEach(group => {
-                console.log(`Name: ${group.name}, ID: ${group.id._serialized}, Admin: ${group.isAdmin}`);
+            uniqueGroups.forEach(group => {
+                const admins = group.participants?.filter(p => p.isAdmin).map(p => p.id.user) || [];
+                console.log(`\nName: ${group.name}, ID: ${group.id._serialized}`);
+                console.log(`Admins: ${admins.length > 0 ? admins.join(', ') : 'None'}`);
             });
         }
     } catch (error) {
@@ -117,45 +182,29 @@ client.on('message', async msg => {
         chat.sendMessage('Bot is not an admin in group');
         return;
     }
-   
-    
+
     const contact = await msg.getContact();
     const contactNumber = contact.id.user;
     const messageText = msg.body.toLowerCase();
     const hasBlockedKeyword = BLOCKED_KEYWORDS.some(keyword => messageText.includes(keyword));
 
+    // Check if sender is an admin
+    const senderId = contact.id._serialized;
+    const isSenderAdmin = chat.participants?.find(p => p.id._serialized === senderId)?.isAdmin || false;
+    if (isSenderAdmin) {
+        console.log(`⚠️ Skipping deletion for admin user ${contactNumber}`);
+        return;
+    }
+
     // Case 1: Non-Israeli number & not whitelisted
     if (!isIsraeliPhoneNumber(contactNumber) && !WHITELIST.includes(contactNumber)) {
         console.log(`🚨 Non-Israeli number detected: ${contactNumber}`);
-        chat.sendMessage('`🚨 Non-Israeli number detectet');
-        let messageIds = [];
+        chat.sendMessage('🚨 Non-Israeli number detected');
         if (hasBlockedKeyword) {
             console.log(`⚠️ Blocked keyword detected in (case 1): "${msg.body}"`);
-            try {
-                const recentMessages = await chat.fetchMessages({ limit: 20 });
-                messageIds = recentMessages
-                    .filter(m => {
-                        const senderId = m.author || m.id.participant || m.from;
-                        return senderId === contact.id._serialized;
-                    })
-                    .map(m => m.id._serialized);
-                console.log(`🗃️ Stored ${messageIds.length} message IDs for deletion`);
-            } catch (error) {
-                console.error(`❌ Failed to fetch messages: ${error.message}`);
-            }
+            chat.sendMessage('⚠️ Blocked keyword detected');
+            await deleteMessages(chat, msg, contactNumber, contact.id._serialized);
         }
-
-        if (hasBlockedKeyword && messageIds.length > 0) {
-            for (const msgId of messageIds) {
-                try {
-                    await client.deleteMessage(chat.id._serialized, msgId, true);
-                    console.log(`🗑️ Deleted message from ${contactNumber}: ID ${msgId}`);
-                } catch (deleteError) {
-                    console.error(`❌ Failed to delete message ${msgId}: ${deleteError.message}`);
-                }
-            }
-        }
-
         await safeRemoveParticipant(chat, contact.id._serialized, contactNumber);
         return;
     }
@@ -163,50 +212,13 @@ client.on('message', async msg => {
     // Case 2: Israeli or whitelisted but used blocked keyword
     if (hasBlockedKeyword) {
         console.log(`⚠️ Blocked keyword detected in (case 2): "${msg.body}"`);
-        chat.sendMessage('⚠️ Blocked keyword detected ');
-
-        // Check if sender is an admin
-        const botId = client.info.wid._serialized;
-        const senderId = contact.id._serialized;
-        const isSenderAdmin = chat.participants?.find(p => p.id._serialized === senderId)?.isAdmin || false;
-            if (isSenderAdmin) {
-                console.log(`⚠️ Skipping deletion for admin user ${contactNumber}`);
-                return;
-            }
-.
-        // Delete the current message
-        try {
-            await msg.delete(true);
-            console.log(`🗑️ Deleted current message from ${contactNumber}: "${msg.body}" (ID: ${msg.id._serialized})`);
-            chat.sendMessage('🗑️ Deleted current message ');
-        } catch (deleteError) {
-            console.error(`❌ Failed to delete current message ID ${msg.id._serialized}: ${deleteError.message}`);
-        }
-
-        try {
-            const recentMessages = await chat.fetchMessages({ limit: 20 });
-            const userMessages = recentMessages.filter(m => {
-                const senderId = m.author || m.id.participant || m.from;
-                return senderId === contact.id._serialized;
-            });
-
-            for (const userMsg of userMessages) {
-                try {
-                    await userMsg.delete(true);
-                    console.log(`🗑️ Deleted message from ${contactNumber}: "${userMsg.body}"`);
-                } catch (deleteError) {
-                    console.error(`❌ Failed to delete a message: ${deleteError.message}`);
-                }
-            }
-
-           // await safeRemoveParticipant(chat, contact.id._serialized, contactNumber);
-        } 
-        catch (error) {
-            console.error(`❌ Error during message cleanup and removal: ${error.message}`);
-        }
-    } else {
-        console.log(`✅ Message is clean: "${msg.body}"`);
+        chat.sendMessage('⚠️ Blocked keyword detected');
+        await deleteMessages(chat, msg, contactNumber, contact.id._serialized);
+        await safeRemoveParticipant(chat, contact.id._serialized, contactNumber);
+        return;
     }
+
+    console.log(`✅ Message is clean: "${msg.body}"`);
 });
 
 // Prevent multiple initializations
