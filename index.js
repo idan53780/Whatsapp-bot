@@ -1,3 +1,4 @@
+//Dependencies
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
@@ -51,13 +52,14 @@ async function safeRemoveParticipant(chat, participantId, label = '') {
         console.log(`Participants in chat ${chat.id._serialized}:`, chat.participants.map(p => p.id._serialized));
         const isParticipant = chat.participants.some(p => p.id._serialized === participantId);
         console.log(`🚫 Attempting to remove user ${label}: ${participantId}`);
+        // If the participant is in the group - Two attempts to kick participant
         if (isParticipant) {
             let attempts = 0;
             while (attempts < 2) {
                 try {
                     await chat.removeParticipants([participantId]);
                     console.log(`🚫 Removed user ${label}: ${participantId}`);
-                    await new Promise(resolve => setTimeout(resolve, 3000)); // 3-second delay
+                    await new Promise(resolve => setTimeout(resolve, 3000)); // //3-second delay to avoid WhatsApp API rate limits
                     return;
                 } catch (error) {
                     attempts++;
@@ -66,9 +68,11 @@ async function safeRemoveParticipant(chat, participantId, label = '') {
                     if (attempts === 2) throw error;
                 }
             }
+         //If participant is not in the group, log a warning   
         } else {
             console.warn(`⚠️ Cannot remove ${label} ${participantId}: Not found in participants`);
         }
+       //If removal fails, log the error 
     } catch (error) {
         console.error(`❌ Failed to remove user ${label} ${participantId}: ${error.message}`);
     }
@@ -84,14 +88,15 @@ async function deleteMessages(chat, msg, contactNumber, contactId) {
     } catch (deleteError) {
         console.error(`❌ Failed to delete current message ID ${msg.id._serialized}: ${deleteError.message}`);
     }
-
+    // Delete all the messages (up to 20 messages)
     try {
+        // Fetching messages
         const recentMessages = await chat.fetchMessages({ limit: 20 });
         const userMessages = recentMessages.filter(m => {
             const senderId = chat.isGroup ? m.author : m.from;
             return senderId === contactId;
         });
-
+        // Delete messages
         for (const userMsg of userMessages) {
             try {
                 await userMsg.delete(true);
@@ -100,6 +105,7 @@ async function deleteMessages(chat, msg, contactNumber, contactId) {
                 console.error(`❌ Failed to delete a message: ${deleteError.message}`);
             }
         }
+        // If fetching or deleting recent messages fails, log the error
     } catch (error) {
         console.error(`❌ Error during message cleanup: ${error.message}`);
     }
@@ -122,44 +128,53 @@ client.on('qr', qr => {
 });
 
 // Ready handler with 5-minute timeout and progress logging
+
 client.on('ready', async () => {
     if (client.isReady) {
         console.log('Ready event triggered again, skipping...');
         return;
     }
+// bot start-up    
     client.isReady = true;
     console.log('✅ Bot is ready!');
     console.log(`Bot WhatsApp ID: ${client.info.wid._serialized}`);
-
+// chat fetching (whatsap groups)
     console.log('Starting to fetch chats...');
-    const startTime = Date.now();
+    const startTime = Date.now();// get current date
     const progressInterval = setInterval(() => {
-        console.log(`Still fetching chats... Elapsed time: ${(Date.now() - startTime) / 1000} seconds`);
+        console.log(`Still fetching chats... Elapsed time: ${(Date.now() - startTime) / 1000} seconds`);//chat fetching interval
     }, 30000);
-
+// Getting chats + setting timeout for the action
     try {
         const chats = await Promise.race([
             client.getChats(),
             new Promise((_, reject) => setTimeout(() => reject(new Error('getChats timed out after 5 minutes')), 300000))
         ]);
-        clearInterval(progressInterval);
-        const endTime = Date.now();
+        clearInterval(progressInterval); // interval reset
+        const endTime = Date.now(); // get the fetching chats end time
+
+        // log information : how many chats and how much time it took to get them
         console.log(`✅ getChats completed in ${(endTime - startTime) / 1000} seconds`);
         console.log(`Total chats found: ${chats.length}`);
 
+        // filtering the chats in order to prevent duplicates
         const groups = chats.filter(chat => chat.isGroup);
         const uniqueGroups = Array.from(new Map(groups.map(g => [g.id._serialized, g])).values());
+        // log information : number of chats and a list of all the chats
         console.log(`Total groups found: ${uniqueGroups.length}`);
         console.log('\n=== Available Groups ===');
+        // log information : if no chats has been found raise relevant message
         if (uniqueGroups.length === 0) {
             console.log('No groups found. Ensure your WhatsApp account is in groups and has admin privileges.');
         } else {
+            // getting the detail of each group including: name , group's admin , group id and showing it in the log
             uniqueGroups.forEach(group => {
                 const admins = group.participants?.filter(p => p.isAdmin).map(p => p.id.user) || [];
                 console.log(`\nName: ${group.name}, ID: ${group.id._serialized}`);
                 console.log(`Admins: ${admins.length > 0 ? admins.join(', ') : 'None'}`);
             });
         }
+     // if the action failed raise relevant error
     } catch (error) {
         clearInterval(progressInterval);
         console.error(`❌ Error fetching chats: ${error.message}`);
@@ -167,14 +182,14 @@ client.on('ready', async () => {
     }
 });
 
-// Message handler
+// Message handler 
 client.on('message', async msg => {
     const chat = await msg.getChat();
     if (!chat.isGroup || !ALLOWED_GROUPS.includes(chat.id._serialized)) {
         console.log(`Ignoring message from non-allowed group: ${chat.id._serialized}`);
         return;
     }
-
+    // Check if the bot is Admin in the group
     const botId = client.info.wid._serialized;
     const botParticipant = chat.participants.find(p => p.id._serialized === botId);
     if (!botParticipant || !botParticipant.isAdmin) {
@@ -182,7 +197,7 @@ client.on('message', async msg => {
         chat.sendMessage('Bot is not an admin in group');
         return;
     }
-
+    // Getting sender information including : phone number, message text , getting blocked keywords (or no blocked keywords)
     const contact = await msg.getContact();
     const contactNumber = contact.id.user;
     const messageText = msg.body.toLowerCase();
