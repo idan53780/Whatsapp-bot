@@ -14,7 +14,7 @@ Instead of connecting to real WhatsApp, it uses a **local server** on your compu
 
 Before you start, make sure you have:
 
-- **Node.js** installed (it’s like a tool that runs JavaScript).
+- **Node.js** installed 
 
 ## Project Files
 
