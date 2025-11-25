@@ -2,6 +2,17 @@
 const fs = require('fs');
 const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
+require('dotenv').config({ path: './envConfig.env' });
+
+//Validate ENV
+if (!process.env.ENV) {
+    console.error('❌ Error: ENV is not set in envConfig.env. Please set ENV=DEV for development or ENV=PRODUCT for production');
+    process.exit(1); //Exit if misconfigured
+}
+
+// Define a flag to check environment status
+const IS_DEV_ENV = process.env.ENV === 'DEV';
+console.log(`🛠️ Environment: development , IS_DEV_ENV = ${IS_DEV_ENV} (ENV = ${process.env.ENV})`);
 
 // Load config
 const config = JSON.parse(fs.readFileSync('./config.json', 'utf-8'));
@@ -15,6 +26,16 @@ function isIsraeliPhoneNumber(phoneNumber) {
     const israelRegex = /^(?:\+972|972|0)(5[0-9])\d{7}$/;
     const result = israelRegex.test(phoneNumber);
     return result;
+}
+
+//Helper to send messages only in development environment
+function SendMessageDev(chat,msg)  {
+    if (IS_DEV_ENV){ 
+        chat.sendMessage(msg);
+        console.log(`📩 Send message in development: "${msg}"`);
+        return;
+    }
+    console.log(`📩 Skipped sending message in ${process.env.ENV}: "${msg}"`);
 }
 
 // Helper to safely remove a participant if they're in the group
@@ -31,7 +52,7 @@ async function safeRemoveParticipant(chat, participantId, label = '') {
         const isBotAdmin = chat.participants.find(p => p.id._serialized === botId)?.isAdmin || false;
         if (!isBotAdmin) {
             console.warn(`⚠️ Cannot remove ${label} ${participantId}: Bot is not an admin`);
-            chat.sendMessage('Bot is not an admin in group');
+            SendMessageDev(chat,'Bot is not an admin in group');
             return;
         }
 
@@ -84,7 +105,7 @@ async function deleteMessages(chat, msg, contactNumber, contactId) {
         // Delete current message
         await msg.delete(true);
         console.log(`🗑️ Deleted current message from ${contactNumber}: "${msg.body}" (ID: ${msg.id._serialized})`);
-        chat.sendMessage('🗑️ Deleted current message');
+        SendMessageDev(chat,'🗑️ Deleted current message');
     } catch (deleteError) {
         console.error(`❌ Failed to delete current message ID ${msg.id._serialized}: ${deleteError.message}`);
     }
@@ -111,15 +132,32 @@ async function deleteMessages(chat, msg, contactNumber, contactId) {
     }
 }
 
-// Init client
+
+
+//Initialize WhatsApp client
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--disable-gpu'],
-        executablePath: require('puppeteer').executablePath()
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu'
+        ]
+       //executablePath: require('puppeteer').executablePath()
     }
 });
+
+// Add Puppeteer error handling
+client.on('puppeteer.error', (error) => {
+    console.error('❌ Puppeteer error:', error.message);
+});
+
+
+
+
 
 // QR code login
 client.on('qr', qr => {
@@ -127,9 +165,23 @@ client.on('qr', qr => {
     qrcode.generate(qr, { small: true });
 });
 
+// Handle authentication failure
+client.on('auth_failure', (msg) => {
+    console.error('❌ Authentication failure:', msg);
+});
+
+//Handle disconnection
+client.on('disconnected', (reason) => {
+    console.error(`❌ Disconnected: ${reason}`);
+    console.error('🛠️ Debug: Attempting to reconnect...');
+    client.initialize().catch(err => {
+        console.error(`❌ Reconnection failed: ${err.message}`);
+    });
+});
 // Ready handler with 5-minute timeout and progress logging
 
 client.on('ready', async () => {
+    console.log('🛠️ Debug: Entered ready event');
     if (client.isReady) {
         console.log('Ready event triggered again, skipping...');
         return;
@@ -138,7 +190,7 @@ client.on('ready', async () => {
     client.isReady = true;
     console.log('✅ Bot is ready!');
     console.log(`Bot WhatsApp ID: ${client.info.wid._serialized}`);
-// chat fetching (whatsap groups)
+// chat fetching (whatsapp groups)
     console.log('Starting to fetch chats...');
     const startTime = Date.now();// get current date
     const progressInterval = setInterval(() => {
@@ -194,7 +246,7 @@ client.on('message', async msg => {
     const botParticipant = chat.participants.find(p => p.id._serialized === botId);
     if (!botParticipant || !botParticipant.isAdmin) {
         console.log(`Bot is not an admin in group ${chat.id._serialized}. Cannot remove participants.`);
-        chat.sendMessage('Bot is not an admin in group');
+        SendMessageDev(chat,'Bot is not an admin in group');
         return;
     }
     // Getting sender information including : phone number, message text , getting blocked keywords (or no blocked keywords)
@@ -214,10 +266,10 @@ client.on('message', async msg => {
     // Case 1: Non-Israeli number & not whitelisted
     if (!isIsraeliPhoneNumber(contactNumber) && !WHITELIST.includes(contactNumber)) {
         console.log(`🚨 Non-Israeli number detected: ${contactNumber}`);
-        chat.sendMessage('🚨 Non-Israeli number detected');
+        SendMessageDev(chat,'🚨 Non-Israeli number detected');
         if (hasBlockedKeyword) {
             console.log(`⚠️ Blocked keyword detected in (case 1): "${msg.body}"`);
-            chat.sendMessage('⚠️ Blocked keyword detected');
+            SendMessageDev(chat,'⚠️ Blocked keyword detected');
             await deleteMessages(chat, msg, contactNumber, contact.id._serialized);
         }
         await safeRemoveParticipant(chat, contact.id._serialized, contactNumber);
@@ -227,7 +279,7 @@ client.on('message', async msg => {
     // Case 2: Israeli or whitelisted but used blocked keyword
     if (hasBlockedKeyword) {
         console.log(`⚠️ Blocked keyword detected in (case 2): "${msg.body}"`);
-        chat.sendMessage('⚠️ Blocked keyword detected');
+        SendMessageDev(chat,'⚠️ Blocked keyword detected');
         await deleteMessages(chat, msg, contactNumber, contact.id._serialized);
         await safeRemoveParticipant(chat, contact.id._serialized, contactNumber);
         return;
@@ -245,3 +297,15 @@ if (!isInitialized) {
     isInitialized = true;
     client.initialize().catch(err => console.error(`❌ Initialization failed: ${err.message}`));
 }
+
+// Timeout for ready event
+setTimeout(() => {
+    if (!client.isReady) {
+        console.error('❌ Ready event not triggered within 2 minutes. Restarting client...');
+        client.destroy().then(() => {
+            client.initialize().catch(err => {
+                console.error(`❌ Re-initialization failed: ${err.message}`);
+            });
+        });
+    }
+}, 120000);
