@@ -13,7 +13,7 @@ This bot helps automate WhatsApp group moderation by:
 
 - ✅ Detects **non-Israeli phone numbers** and removes them (unless whitelisted)  
 - ✅ Monitors **blocked keywords** and deletes messages containing them  
-- 🚧 Removes users who send prohibited messages 🚧 - will be added in a future version  
+- ✅ Removes users who send prohibited messages   
 - ✅ Operates only in **allowed groups** (configured in `config.json`)  
 - ✅ Verifies that the **bot is an admin** before taking action  
 - ✅ Includes safety checks to **avoid removing group admins**  
